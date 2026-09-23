@@ -1,57 +1,113 @@
 # agent-kit
 
-Shared extensions and skills for [omp](https://github.com/can1357/oh-my-pi). Only generic,
-reusable pieces are here; personal agent config (profile, preferences, model roles) is not.
+An extension and two skills for [omp](https://github.com/can1357/oh-my-pi), shared from a
+working setup. The main piece is **pilot mode** (`/pilot`): it stops your coding agent from
+certifying its own work at the three points where a mistake costs the most. Nothing personal
+is included: no profile, no model config.
 
 ## Install
 
 ```bash
-git clone <this repo> ~/agent-kit
-~/agent-kit/install.sh            # links everything into ~/.omp
-~/agent-kit/install.sh --status   # shows what is linked
+git clone https://github.com/minhquan23102000/agent-kit.git ~/agent-kit
+~/agent-kit/install.sh            # link everything into ~/.omp
+~/agent-kit/install.sh --status   # show what is linked
 ```
 
-Everything is linked, not copied, so `git pull` updates your install. A real file already at a
-target is left untouched and reported as a conflict. Set `OMP_HOME` to install somewhere other
-than `~/.omp`. Restart omp after installing.
+Then tell omp where the skills are. The kit installs them into `~/.omp/.agents/skills`, and omp
+does not scan that folder by default. Add it to `~/.omp/agent/config.yml`:
+
+```yaml
+skills:
+  customDirectories:
+    - ~/.omp/.agents/skills
+```
+
+Restart omp. Inside omp, run `/login typesafe` once: pilot mode and both skills call TypeSafe's
+Jev model, and the key is kept in omp's own credential store.
+
+`install.sh` creates symlinks instead of copies, so `git -C ~/agent-kit pull` plus a restart is
+the whole update. If a real file already sits where a link should go, the script leaves it
+alone and reports a conflict. Set `OMP_HOME` to install somewhere other than `~/.omp`. To
+uninstall, delete the links it created.
 
 ## What's inside
 
-| Path | What it is |
+| Path | What it does |
 |---|---|
-| `agent/extensions/jev-pilot.ts` | Pilot mode (`/pilot`) |
-| `.agents/skills/calibrated-judgment` | Turns an agent's gut-check judgments ("is this done?", "does the evidence support this?") into calibrated typed decisions through omp's `judge` (TypeSafe Jev). Pilot mode reads its references |
-| `.agents/skills/browser-autopilot` | Drives or verifies a browser flow step by step with Jev, instead of spending a large-model turn on every click |
+| `agent/extensions/jev-pilot.ts` | Pilot mode, the `/pilot` command |
+| `.agents/skills/calibrated-judgment` | Turns the agent's gut checks ("is this done?", "does the evidence support this?", "do I know enough to decide?") into calibrated judgments through omp's `judge`. Pilot mode reads its reference files, so install both |
+| `.agents/skills/browser-autopilot` | Drives or checks a browser flow (log in, fill a form, click through steps), with Jev choosing each step instead of a large-model turn per click. Hands control back when unsure. Not for visual or pixel checks |
 
 ## Pilot mode
 
-An agent certifies its own work at the three points where mistakes cost the most: reading
-what you meant, choosing the approach, and declaring the work done. Advice in a skill doesn't
-hold at those points, because nothing forces the agent to follow it. Pilot mode turns them
-into gates the agent can't talk its way past.
+### The problem
 
-| Phase | What the pilot does | Where Jev is used |
+An agent grades itself at three points: what you meant, which approach to take, and whether
+it's done. A rule in a skill doesn't hold at those points, because nothing makes the agent read
+it or follow it. While this was being built, the agent, which knew the design and was trying to
+follow it, skipped the reference file, started new work without updating the goal, and wrote
+"all criteria met" without checking any of them. Pilot mode turns the three points into gates.
+It uses Jev (a fast, cheap model that answers typed questions with probabilities) only where
+Jev measures something real.
+
+### What you see
+
+Type your task and turn on `/pilot`. The agent can't edit files yet. First it shows you:
+
+- the goal, in one sentence
+- numbered criteria
+- questions D1..Dn, each with two readings, for example: *D1. What does "faster" mean?
+  (a) the query runs faster (b) finance gets the file earlier*
+
+It decides cheap questions itself and lists them in one line, so you can overrule them. Reply
+with `ok`, `D1 b`, or `change criterion 2 to ...`. Only a clear yes moves on. A reply that only
+asks a question keeps the draft waiting.
+
+Next, an oracle agent reviews the approach, and only then does the agent edit anything. When it
+stops, it must quote real tool output for each criterion. The pilot checks that every quote
+appears word for word in the session, and Jev judges each criterion against its own quotes.
+
+The status bar shows one chip: `goal · 1 to you`, `execution · Jev ✓3/3` (or `[WARN]2/3`),
+`completion ✓4/4`. A widget above the editor appears only when Jev says no, one line per
+criterion, and each line tells you which kind of no it is:
+
+- `x export fast 1% · cited: "real 0m31.2s"`: a real failure. The quoted evidence shows the
+  criterion is not met.
+- `x file in finance 4% · no citation`: the agent gave no evidence for this criterion.
+- `[WARN] report live 38% · plan only`: a doubt about the plan. It clears once the work is done.
+
+`/pilot` toggles pilot mode on and off. `/pilot show` lists the goal and criteria.
+
+### Phases
+
+| Phase | What the pilot does | What Jev does |
 |---|---|---|
-| Goal | Blocks edits. The agent reads `goal-comprehension.md`, then shows the goal, numbered criteria and open questions D1..Dn | Scores each question by how costly a wrong guess is: costly ones go to you, cheap ones the agent decides in one line. Classifies your reply: only an explicit yes counts as agreement, and a message that only asks a question doesn't |
-| Solution | Blocks edits until an oracle has reviewed the approach and `pilot_propose` is called | Warns, never blocks. Scores only criteria about the product, not about the process |
-| Execution | Detects a stuck agent (repeated tools, consecutive errors) | Not used |
-| Review | Every stop that isn't a question for you lands here. The agent quotes tool output for each criterion with `pilot_report`; the code checks every quote appears verbatim | Not used |
-| Completion | Hard gate. After 3 blocks it lets the work through, marked unverified | Checks each criterion against its own quotes and the final message |
+| Goal | Blocks edits. The agent reads `goal-comprehension.md`, then drafts the goal, criteria and questions | Scores how costly a wrong guess is for each question (costly ones go to you), and sorts your reply into agree, change, reject or other |
+| Solution | Blocks edits until an oracle has answered and the agent has submitted its approach. Saying "done" here sends the agent back | Warns about the plan, never blocks. Checks only criteria about the result, not about the process |
+| Execution | Detects a stuck agent (repeated tools, errors in a row) | Nothing |
+| Review | Every stop that isn't a question for you lands here. The agent quotes evidence per criterion, and the code checks the quotes | Nothing |
+| Completion | Hard gate. After 3 blocks it lets the work through marked UNVERIFIED and tells you which criteria failed | Judges each criterion against its quotes and the final message |
 
-The goal, criteria and approach are added to the system prompt every turn, so they survive
-compaction. They're also added to every `task` call, so subagents don't start blank. The
-status bar shows one chip with Jev's latest result (`goal · 1 to you`,
-`execution · Jev ✓3/3`, `completion ✓4/4`). A widget appears only when Jev says no, one line
-per criterion with what it judged (`cited: "…"`, `no citation`, `plan only`), so you can tell
-noise from a real failure. `/pilot` toggles it; `/pilot show` lists the goal and criteria.
+The goal, criteria and approach are added to the system prompt on every turn, so they survive
+compaction. They're also added to every `task` call, so subagents and the oracle see them too.
 
-Turn it on when a wrong reading or a wrong approach is expensive: ambiguous requirements,
-structural changes, work you can only check at the end. For small, clear tasks it's overhead.
+### When to use it
 
-It needs a TypeSafe credential in omp's credential store (`/login typesafe`).
+Use pilot mode when a wrong reading or a wrong approach is expensive: vague requirements,
+structural changes, work you can only check at the end. Skip it for small, clear tasks, where
+the agreement round and the oracle call are pure overhead.
 
-To show the status chip inside the bar, your status line needs the `status` segment, e.g. in
-`~/.omp/agent/config.yml`:
+Write any threshold in a criterion as an absolute number ("20s or less"), never a relative one
+("twice as fast"). Jev doesn't do arithmetic, and a relative threshold lets a failing result
+pass.
+
+Limits: pilot mode has been tested on small real tasks, not yet measured against a run without
+it on a hard task. It can't find unknowns ahead of time. When execution runs into one, it brings
+it back to you.
+
+### Showing the chip in the status bar
+
+The chip needs the `status` segment in your status line. In `~/.omp/agent/config.yml`:
 
 ```yaml
 statusLine:
