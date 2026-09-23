@@ -1,4 +1,4 @@
-# Jev Agent-Kit R&amp;D for OMP
+# Jev Agent-Kit R&amp;D 
 
 Agent make dozens of silent judgments a turn: is this done, is this correct, do I have enough to decide, which way now. Made inside your own text stream, those judgments are uncalibrated and biased toward finishing, you tend to certify your own work. judge hands one such judgment to Jev.
 
