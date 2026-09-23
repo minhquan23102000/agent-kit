@@ -70,30 +70,17 @@ the locate its own question — a `choice` over the candidate spans you found in
 winner in the state.
 
 **2. Break the artifact into facts, then find the decisive one.** The first field of the state is the
-list, so a state without it is not a state. An artifact is not a fact, it
-is a bundle of them, and "is this right?" asked of a bundle gets answered by averaging — and the
-average hides the one broken part. So enumerate: one sentence per path through the artifact, each
-true or false about a specific situation. For code that is every branch, early return, raise, side effect,
-and boundary — "input X gives behaviour Y" — and every one of them is a claim you can be wrong
-about.
+list, so a state without it is not a state. An artifact is a bundle of facts, and "is this
+right?" asked of a bundle gets answered by averaging, which hides the one broken part. The split
+itself (the five conditions a fact must meet, listing from the bytes, the two-way check, and the
+list of parts that cannot become a fact) is the
+`decompose-facts` skill. Read it and use its `atoms` as this field; its `not_atoms` are the part
+of the judgment that stays with the human.
 
-Each fact then needs two things: a **probe** (the input or action that exercises it) and an
-**observation** (what you would see if it holds). A fact you cannot probe is not a fact you can
-verify, and that gap is itself a finding.
-
-Two rules keep the decomposition honest. A fact states what the artifact **does**, never what the
-standard **requires** — the observation goes in the fact, the expectation goes in the standard, and
-merging the two makes the comparison impossible to make. And the fact list is an **index, not
-evidence**: it is a lossy projection you made, and it can be wrong by omission or by distortion. So
-the state carries the raw span that the decisive fact points at, and one of the questions you ask is
-whether the fact matches that span. Drop the raw and you lose exactly the ability to catch your own
-decomposition being wrong, which is the error this step is most likely to introduce.
-
-The enumeration itself should be a program's output wherever a program can produce it: a branch
-list, a path report, a schema walk, a recomputed figure. The tool reading the source costs you
-nothing, while you reading it costs your whole context, and on a large artifact that reading is the
-entire cost of the judgment. Then filter before you judge: a fact no criterion touches is not
-judged, so only the handful that can move the answer ever needs its raw span carried.
+Two things it hands you that matter here. The fact list is an **index, not evidence**: the state
+carries the raw span the decisive fact points at, so Jev can see whether the fact matches it. And
+filter before you judge: a fact no criterion touches is not judged, so only the handful that can
+move the answer needs its span carried.
 
 Then ask which of them can flip the answer. That one is the decisive difference, and it is what you
 go get. Two kinds of fact, and the difference matters:
@@ -103,22 +90,8 @@ go get. Two kinds of fact, and the difference matters:
   fact you never produced: run the thing, then scoop the output. This is why a claim about behavior
   needs a receipt, not a source listing.
 
-Code is only the easy case of this step, and the shape holds everywhere. What changes is the two
-halves. **Enumeration** is mechanical only where the artifact has countable units: code has paths, a
-dataset has rows, a plan has consequences, prose has sentences and beats. Where no tool can list
-them you list them by hand, and the list is then only as complete as your reading, which is one more
-reason the raw span travels with the fact. **The probe** is what decides whether you have a fact at
-all. A statement with a probe is checkable: run it, recompute it, search the canon, walk the
-scenario, apply the rule to the labelled case. A statement with no probe is not a fact, and writing
-it into the list as though it were is the lie to avoid; mark it unprobeable instead, because that
-mark is itself the finding — it is the part of the judgment that stays with the human. So the
-closability ladder in *Where Jev is weak* is the same ladder read from the artifact's side: a story
-splits into canon facts, whose probe is a search of the canon, and experience facts, which have no
-probe and which no quantity of evidence will ever settle.
-
-One more thing the artifact usually is: a **change**, not a thing. A diff, a revision, a delta from
-the status quo. Then the facts are about the delta — what does this make true that was not true
-before — and the standard is whatever the delta was supposed to accomplish.
+When the artifact is a **change** (a diff, a revision), the facts are about the delta, and the
+standard is whatever the delta was supposed to accomplish.
 
 **3. Fetch the standard, verbatim, into its own field.** The standard is the contract, spec, canon,
 or policy the artifact has to satisfy. It is a fact about the world, so it belongs in the **state**,
@@ -223,29 +196,12 @@ ans = await judge(state, {
   measurably nudges the score (a plain false fact sat at 0.01; the same fact dressed in doubt
   drifted to 0.18). Keep the claim and evidence worded plainly.
 
-## The two scripts and three references
+## The script and three references
 
-Two scripts and three references ship with this skill. Reach for them instead of re-deriving them;
-the scripts are executed, never pasted into context.
+One script and three references ship with this skill. Reach for them instead of re-deriving them;
+the script is executed, never pasted into context. Enumerating an artifact into facts (including
+the `clerk.py` script for code) lives in `decompose-facts`.
 
-- **The clerk, for artifacts**: `from clerk import paths`, then `await paths("src/app.ts")`. It
-  reads the artifact and returns one row per behaviour it can exhibit, with the line number it
-  lives on, so the fact list starts from real bytes and the artifact never enters your context.
-  Name each row as a fact and give each one a probe. Parsing is tree-sitter
-  (`tree-sitter-language-pack`), which supplies the syntax but not the meaning: what counts as a
-  behaviour point is the clerk's own table, and it differs by language — a return or a branch in a
-  control-flow language, a predicate in SQL (rows that match are included, rows that do not are
-  not), a key in a data language.
-  - **treesitter** — the grammar parsed it. The first run on a language fetches its grammar, so it
-    needs network; later runs do not.
-  - **astgrep** — no grammar here, but the `ast_grep` tool can read it. The clerk finds that tool
-    in the calling kernel itself; pass `grep=` only if that fails.
-  - **none** — neither. It **refuses** rather than returning an empty list, because an empty list
-    reads as "nothing to check" and that is the lie this skill exists to prevent. Enumerate those
-    by hand and carry the raw span with each fact. When a grammar does parse but nothing matches,
-    it says so in `note` instead of pretending the artifact does nothing.
-  The CLI runs every tier it can reach offline: `python clerk.py query.sql`,
-  `python clerk.py schema.yaml --json`.
 - **The gatekeeper, always**: `from verify import verify`, then
   `await verify(judge, facts=..., claim=..., evidence=..., standard=..., counter=..., questions=...,
   pairs={"claim_holds": "claim_fails"})`.
@@ -267,10 +223,6 @@ the scripts are executed, never pasted into context.
   Read it when you are about to yield or tell the user the work is done. It holds where the
   standard at that gate has to come from, and the measured reason a single "does it meet the
   standard?" question must be split one criterion per question.
-
-For an artifact no script can count — prose, a design, a canon — the clerk is a cheap `completion`
-drafting the list, which you then check against the artifact itself. A draft is a candidate, never
-evidence, and a draft with no line numbers is exactly the raw-span problem again.
 
 ## Ask the right question, not just ask it well
 

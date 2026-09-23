@@ -23,7 +23,7 @@ Three tiers:
     python clerk.py query.sql
     python clerk.py schema.yaml --json
 
-    import sys; sys.path.insert(0, r".../calibrated-judgment/scripts")
+    import sys; sys.path.insert(0, r".../decompose-facts/scripts")
     from clerk import paths
     rows = await paths("src/app.ts")
 """

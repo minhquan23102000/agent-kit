@@ -31,8 +31,8 @@ modelRoles:
   advisor: <a strong reasoning model you have access to>
 ```
 
-Restart omp. Inside omp, run `/login typesafe` once: pilot mode and both skills call TypeSafe's
-Jev model, and the key is kept in omp's own credential store.
+Restart omp. Inside omp, run `/login typesafe` once: pilot mode, `calibrated-judgment` and
+`browser-autopilot` call TypeSafe's Jev model, and the key is kept in omp's own credential store.
 
 `install.sh` creates symlinks instead of copies, so `git -C ~/agent-kit pull` plus a restart is
 the whole update. If a real file already sits where a link should go, the script leaves it
@@ -47,6 +47,7 @@ uninstall, delete the links it created.
 | `agent/extensions/jev-pilot.ts`      | Pilot mode, the `/pilot` command                                                                                                                                                                                        |
 | `agent/agents/oracle.md`             | Read-only oracle subagent for a second opinion on consequential decisions. Pilot mode requires it: edits stay blocked until the oracle has reviewed the approach                                                        |
 | `.agents/skills/calibrated-judgment` | Turns the agent's gut checks ("is this done?", "does the evidence support this?", "do I know enough to decide?") into calibrated judgments through omp's `judge`. Pilot mode reads its reference files, so install both |
+| `.agents/skills/decompose-facts`     | Splits anything that has to be checked (code, a spec, a rule, a claim, a request) into small facts that can each be verified alone, plus a list of the parts that cannot. `calibrated-judgment` points to it, so install both. No model calls |
 | `.agents/skills/browser-autopilot`   | Drives or checks a browser flow (log in, fill a form, click through steps), with Jev choosing each step instead of a large-model turn per click. Hands control back when unsure. Not for visual or pixel checks         |
 
 
@@ -130,3 +131,28 @@ statusLine:
   showHookStatus: false
 ```
 
+
+## Decompose facts
+
+A verifier answers whatever it is asked. Ask a judge, a reviewer or a test one question about
+three things and it averages them, and the broken one disappears. This skill does the split
+before anything is checked, and nothing else: it does not decide who checks each fact and it
+does not call a model.
+
+It returns two lists. `atoms`: one fact per line, with the span it comes from (path and lines,
+or quoted words) and the probe that would settle it. `not_atoms`: the parts no probe could
+settle ("the design hangs together", "the reader feels the loss"), each with a reason. These
+are listed on purpose, so the person holding the goal knows what is left to them.
+
+A fact is small enough when it makes one demand, has one way to be settled (arithmetic goes to
+code, thresholds are absolute numbers), stands on its own ("as before" is not allowed), applies
+to the thing being checked, and could turn out false. For code, `scripts/clerk.py` lists every
+branch, return, raise, SQL predicate or key with its line number (`python clerk.py <file>`;
+needs `pip install tree-sitter-language-pack`, and the first run for a language downloads its
+grammar). Then each atom is checked against its span, and the source against the list.
+
+Use it before judging, testing or reviewing anything bigger than one sentence, or when a check
+came back green and you are not sure it checked the right thing. Skip it for a one-line change a
+single command already proves. Limits: tried on a handful of cases from its own development and
+on one self-audit of a design document, where it found five stale citations; not yet tested on
+other kinds of material.
