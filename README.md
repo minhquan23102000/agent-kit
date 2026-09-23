@@ -1,8 +1,8 @@
 # Jev Agent-Kit R&amp;D for OMP
 
-### agent-kit
+Agent make dozens of silent judgments a turn: is this done, is this correct, do I have enough to decide, which way now. Made inside your own text stream, those judgments are uncalibrated and biased toward finishing, you tend to certify your own work. judge hands one such judgment to Jev.
 
-An extension, a subagent and two skills for [omp](https://github.com/can1357/oh-my-pi), shared from a
+Jev extension, a subagent and skills for [omp](https://github.com/can1357/oh-my-pi), shared from a
 working setup. The main piece is **pilot mode** (`/pilot`): it stops your coding agent from
 certifying its own work at the three points where a mistake costs the most. Nothing personal
 is included: no profile, no model config.
