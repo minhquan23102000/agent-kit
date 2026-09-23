@@ -1,4 +1,6 @@
-# agent-kit
+# Jev Agent-Kit R&amp;D for OMP
+
+### agent-kit
 
 An extension, a subagent and two skills for [omp](https://github.com/can1357/oh-my-pi), shared from a
 working setup. The main piece is **pilot mode** (`/pilot`): it stops your coding agent from
@@ -39,12 +41,14 @@ uninstall, delete the links it created.
 
 ## What's inside
 
-| Path | What it does |
-|---|---|
-| `agent/extensions/jev-pilot.ts` | Pilot mode, the `/pilot` command |
-| `agent/agents/oracle.md` | Read-only oracle subagent for a second opinion on consequential decisions. Pilot mode requires it: edits stay blocked until the oracle has reviewed the approach |
+
+| Path                                 | What it does                                                                                                                                                                                                            |
+| ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `agent/extensions/jev-pilot.ts`      | Pilot mode, the `/pilot` command                                                                                                                                                                                        |
+| `agent/agents/oracle.md`             | Read-only oracle subagent for a second opinion on consequential decisions. Pilot mode requires it: edits stay blocked until the oracle has reviewed the approach                                                        |
 | `.agents/skills/calibrated-judgment` | Turns the agent's gut checks ("is this done?", "does the evidence support this?", "do I know enough to decide?") into calibrated judgments through omp's `judge`. Pilot mode reads its reference files, so install both |
-| `.agents/skills/browser-autopilot` | Drives or checks a browser flow (log in, fill a form, click through steps), with Jev choosing each step instead of a large-model turn per click. Hands control back when unsure. Not for visual or pixel checks |
+| `.agents/skills/browser-autopilot`   | Drives or checks a browser flow (log in, fill a form, click through steps), with Jev choosing each step instead of a large-model turn per click. Hands control back when unsure. Not for visual or pixel checks         |
+
 
 ## Pilot mode
 
@@ -65,7 +69,7 @@ Type your task and turn on `/pilot`. The agent can't edit files yet. First it sh
 - the goal, in one sentence
 - numbered criteria
 - questions D1..Dn, each with two readings, for example: *D1. What does "faster" mean?
-  (a) the query runs faster (b) finance gets the file earlier*
+(a) the query runs faster (b) finance gets the file earlier*
 
 It decides cheap questions itself and lists them in one line, so you can overrule them. Reply
 with `ok`, `D1 b`, or `change criterion 2 to ...`. Only a clear yes moves on. A reply that only
@@ -80,7 +84,7 @@ The status bar shows one chip: `goal · 1 to you`, `execution · Jev ✓3/3` (or
 criterion, and each line tells you which kind of no it is:
 
 - `x export fast 1% · cited: "real 0m31.2s"`: a real failure. The quoted evidence shows the
-  criterion is not met.
+criterion is not met.
 - `x file in finance 4% · no citation`: the agent gave no evidence for this criterion.
 - `[WARN] report live 38% · plan only`: a doubt about the plan. It clears once the work is done.
 
@@ -88,13 +92,15 @@ criterion, and each line tells you which kind of no it is:
 
 ### Phases
 
-| Phase | What the pilot does | What Jev does |
-|---|---|---|
-| Goal | Blocks edits. The agent reads `goal-comprehension.md`, then drafts the goal, criteria and questions | Scores how costly a wrong guess is for each question (costly ones go to you), and sorts your reply into agree, change, reject or other |
-| Solution | Blocks edits until an oracle has answered and the agent has submitted its approach. Saying "done" here sends the agent back | Warns about the plan, never blocks. Checks only criteria about the result, not about the process |
-| Execution | Detects a stuck agent (repeated tools, errors in a row) | Nothing |
-| Review | Every stop that isn't a question for you lands here. The agent quotes evidence per criterion, and the code checks the quotes | Nothing |
-| Completion | Hard gate. After 3 blocks it lets the work through marked UNVERIFIED and tells you which criteria failed | Judges each criterion against its quotes and the final message |
+
+| Phase      | What the pilot does                                                                                                          | What Jev does                                                                                                                          |
+| ---------- | ---------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| Goal       | Blocks edits. The agent reads `goal-comprehension.md`, then drafts the goal, criteria and questions                          | Scores how costly a wrong guess is for each question (costly ones go to you), and sorts your reply into agree, change, reject or other |
+| Solution   | Blocks edits until an oracle has answered and the agent has submitted its approach. Saying "done" here sends the agent back  | Warns about the plan, never blocks. Checks only criteria about the result, not about the process                                       |
+| Execution  | Detects a stuck agent (repeated tools, errors in a row)                                                                      | Nothing                                                                                                                                |
+| Review     | Every stop that isn't a question for you lands here. The agent quotes evidence per criterion, and the code checks the quotes | Nothing                                                                                                                                |
+| Completion | Hard gate. After 3 blocks it lets the work through marked UNVERIFIED and tells you which criteria failed                     | Judges each criterion against its quotes and the final message                                                                         |
+
 
 The goal, criteria and approach are added to the system prompt on every turn, so they survive
 compaction. They're also added to every `task` call, so subagents and the oracle see them too.
@@ -123,3 +129,4 @@ statusLine:
   leftSegments: [pi, model, mode, status, path, git, context_pct, cost]
   showHookStatus: false
 ```
+
