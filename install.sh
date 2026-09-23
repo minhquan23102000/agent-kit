@@ -12,6 +12,7 @@ KIT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OMP="${OMP_HOME:-$HOME/.omp}"
 SKILLS="$OMP/.agents/skills"
 EXTENSIONS="$OMP/agent/extensions"
+AGENTS="$OMP/agent/agents"
 
 link() { # link <source> <target>
   local src="$1" dst="$2"
@@ -35,5 +36,8 @@ for dir in "$KIT"/.agents/skills/*/; do
 done
 for file in "$KIT"/agent/extensions/*.ts; do
   link "$file" "$EXTENSIONS/$(basename "$file")"
+done
+for file in "$KIT"/agent/agents/*.md; do
+  link "$file" "$AGENTS/$(basename "$file")"
 done
 exit "$CONFLICT"

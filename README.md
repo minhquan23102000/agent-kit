@@ -1,6 +1,6 @@
 # agent-kit
 
-An extension and two skills for [omp](https://github.com/can1357/oh-my-pi), shared from a
+An extension, a subagent and two skills for [omp](https://github.com/can1357/oh-my-pi), shared from a
 working setup. The main piece is **pilot mode** (`/pilot`): it stops your coding agent from
 certifying its own work at the three points where a mistake costs the most. Nothing personal
 is included: no profile, no model config.
@@ -22,6 +22,13 @@ skills:
     - ~/.omp/.agents/skills
 ```
 
+The oracle runs on the model you assign to the `advisor` role. Pick a strong one, since its job is to catch what your main model missed:
+
+```yaml
+modelRoles:
+  advisor: <a strong reasoning model you have access to>
+```
+
 Restart omp. Inside omp, run `/login typesafe` once: pilot mode and both skills call TypeSafe's
 Jev model, and the key is kept in omp's own credential store.
 
@@ -35,6 +42,7 @@ uninstall, delete the links it created.
 | Path | What it does |
 |---|---|
 | `agent/extensions/jev-pilot.ts` | Pilot mode, the `/pilot` command |
+| `agent/agents/oracle.md` | Read-only oracle subagent for a second opinion on consequential decisions. Pilot mode requires it: edits stay blocked until the oracle has reviewed the approach |
 | `.agents/skills/calibrated-judgment` | Turns the agent's gut checks ("is this done?", "does the evidence support this?", "do I know enough to decide?") into calibrated judgments through omp's `judge`. Pilot mode reads its reference files, so install both |
 | `.agents/skills/browser-autopilot` | Drives or checks a browser flow (log in, fill a form, click through steps), with Jev choosing each step instead of a large-model turn per click. Hands control back when unsure. Not for visual or pixel checks |
 
