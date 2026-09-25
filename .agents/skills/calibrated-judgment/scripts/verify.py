@@ -3,6 +3,8 @@
 `judge` takes any dict, so an agent can leave out whichever field it forgot. This
 wrapper makes the shape non-optional: the call does not happen until every field is
 present, the fact list has more than one entry, and the counter names where it looked.
+It runs in the omp eval kernel, the only place `judge` exists, and takes it as an argument;
+it is not a standalone script.
 
     import sys
     sys.path.insert(0, "<calibrated-judgment skill dir>/scripts")
@@ -12,14 +14,19 @@ present, the fact list has more than one entry, and the counter names where it l
         judge,
         facts=["normalize(None) raises TypeError", "normalize('0...') returns '+84...'"],
         claim="normalize returns E.164 for a local-prefix number",
-        evidence="line 14-19: digits = raw.strip(); if not E164.match(digits): raise ValueError",
+        evidence="ran normalize('090 123 4567') -> returned '+84901234567' (msisdn.py:14-19)",
         standard="R1 (SPEC-7): normalize must accept spaces or dashes inside the number",
+        rule="Behavior is shown by a run on the input the requirement names, not by the source.",
         counter="searched docs/**, config/**, CHANGELOG for a supersession of SPEC-7: none",
         questions={"correct": {"type": "bool", "instructions": "..."}},
     )
     print(result["warnings"])
     print(result["answers"])
     print(result["pairs"])
+
+`rule` is optional because not every claim needs one, but a claim that asserts a cause
+(fixed, prevents, works) without it is warned about: Jev has no causal model of its own
+and, given no rule, passes a diff read as proof of a fix (0.65 without, 0.06 with).
 
 `questions` may include a pair written as `x` and `not_x`; the sums are reported so a
 contradictory pair (both sides endorsed, or a total far from 1) is visible without the
@@ -43,6 +50,22 @@ _LOCATION = re.compile(
     re.IGNORECASE,
 )
 
+# Evidence is clean when every value in it came from code that ran or from a verbatim cut, so
+# the check is for a trace of either: an output verb or marker, or coordinates. "Handles
+# separators correctly, all tests pass" has neither; it is the claim restated. Measured: that
+# summary scored 0.47 in the world where the claim was true and 0.49 where it was false.
+_OBSERVED = re.compile(
+    r"\b(?:returned|raised|exit(?:ed)? (?:code|with)|stdout|stderr|Traceback|wrote|printed)\b"
+    r"|\b(?:PASSED|FAILED|ERROR)\b|\$ |->|:\d+|\blines? \d+",
+)
+
+# A claim about cause needs a rule saying what observation shows that cause. Warning only.
+_CAUSAL = re.compile(
+    r"\b(?:fix(?:es|ed)?|caus(?:e|es|ed)|prevent(?:s|ed)?|resolv(?:e|es|ed)|broke|breaks?"
+    r"|because|works?|makes?|made)\b",
+    re.IGNORECASE,
+)
+
 # Warning only, never a refusal. Provisional: a state holding a whole document was seen to
 # pin a judgment near the top and stop moving when the document moved; this cut-off was
 # not calibrated. Print it with the warning so it can be argued with.
@@ -58,8 +81,8 @@ class Incomplete(Exception):
     """The state is missing something the call is not allowed to proceed without."""
 
 
-def build(facts: Iterable[str], claim: str, evidence: str, standard: str,
-          counter: str) -> dict[str, Any]:
+def build(facts: Iterable[str], claim: str, evidence: Any, standard: str,
+          counter: str, rule: str | None = None) -> dict[str, Any]:
     facts = list(facts or [])
     fields = {
         "facts": facts,
@@ -86,6 +109,10 @@ def build(facts: Iterable[str], claim: str, evidence: str, standard: str,
             "\"searched docs/**, config/**, CHANGELOG: none\". An absence with no place is not "
             "an empty counter, it is the hole wearing a label."
         )
+    if rule is not None:
+        if not rule.strip():
+            raise Incomplete("rule was passed empty. Leave it out, or write the rule.")
+        fields["rule"] = rule
     return fields
 
 
@@ -117,6 +144,20 @@ def _warnings(state: dict[str, Any], questions: dict[str, Any],
             f"state is {size} chars, past {MAX_STATE_CHARS}: judgments over a state this large "
             "have been measured to stop moving when the artifact moves. Cut it to the span."
         )
+    evidence = state["evidence"]
+    evidence_text = evidence if isinstance(evidence, str) else json.dumps(evidence)
+    if not (_OBSERVED.search(evidence_text) or _LOCATION.search(evidence_text)):
+        out.append(
+            "evidence names no command, output, or coordinates, so it reads as your own summary. "
+            "Carry what code produced (with the command) or a verbatim cut (with path:lines); "
+            "a summary is judged as your belief, not as the world."
+        )
+    if "rule" not in state and _CAUSAL.search(state["claim"]):
+        out.append(
+            "the claim asserts a cause but the state has no rule. Say what observation shows a "
+            "claim of this kind (for a fix: the same input fails before and passes after), or Jev "
+            "falls back on what sounds plausible."
+        )
     bools = [k for k, q in questions.items() if q.get("type") == "bool"]
     if bools and not _pairs(questions, declared):
         out.append(
@@ -127,8 +168,9 @@ def _warnings(state: dict[str, Any], questions: dict[str, Any],
     return out
 
 
-async def verify(judge: Callable, facts: Iterable[str], claim: str, evidence: str,
+async def verify(judge: Callable, facts: Iterable[str], claim: str, evidence: Any,
                  standard: str, counter: str, questions: dict[str, Any],
+                 rule: str | None = None,
                  pairs: dict[str, str] | None = None,
                  tolerance: tuple[float, float] = PAIR_TOLERANCE) -> dict[str, Any]:
     """Check the shape, then judge. Raises Incomplete before any call is made.
@@ -137,7 +179,7 @@ async def verify(judge: Callable, facts: Iterable[str], claim: str, evidence: st
     `pairs={"claim_holds": "claim_fails"}`. Declare it whenever the two ids do not follow
     the `not_<id>` convention, because nothing mechanical can recognise an antonym.
     """
-    state = build(facts, claim, evidence, standard, counter)
+    state = build(facts, claim, evidence, standard, counter, rule)
     warnings = _warnings(state, questions, pairs)
     answers = await judge(state, questions)
 

@@ -1,16 +1,16 @@
 ---
 name: calibrated-judgment
 description: >-
-  Turns an agent's own in-band gut-check judgments into calibrated typed decisions using omp's
-  judge/judge_batch (the Jev System-One model): whether the current state holds enough to decide,
-  whether raw evidence actually supports a claim about to be made, whether a goal is truly met, or
-  which of a fixed set of paths to take. Use when about to assert "done", "this works", "this is
-  correct", or "enough context" and a second calibrated opinion beats self-certifying; when
-  verifying a claim against evidence, assembling what Jev will be shown, checking sufficiency
-  before acting, checking that your questions even test the real goal, scoring an artifact against
-  a rubric, or deciding whether work is ready to ship; and when the user mentions Jev, judge,
-  TypeSafe, calibrated judgment, noul, or LLM-as-judge. Not for multi-step reasoning or planning
-  (it answers only atomic gut-checks), and not for deterministic checks code can compute exactly.
+  Turns an agent's own gut-check judgments into calibrated typed decisions with omp's
+  judge/judge_batch (the Jev System-One model), and builds the state Jev needs: evidence
+  preprocessed so it can be settled in one step, plus the standard and the causal rule it is
+  judged under. Use when about to assert "done", "this works", "fixed", or "enough context" and a
+  calibrated second opinion beats self-certifying; when deciding what goes into a judge's state or
+  how to preprocess logs, code, or diffs for it; when verifying a claim against evidence, checking
+  sufficiency before acting, testing whether your questions test the real goal, scoring against a
+  rubric, or gating a ship; and when the user mentions Jev, judge, TypeSafe, calibrated judgment,
+  noul, or LLM-as-judge. Not for multi-step reasoning or planning (it answers atomic gut-checks
+  only), and not for checks code can compute exactly.
 ---
 
 # Calibrated judgment
@@ -20,16 +20,26 @@ decide, which way now. Made inside your own text stream, those judgments are unc
 biased toward finishing — you tend to certify your own work. `judge` hands one such judgment to
 Jev, a model trained to return a *calibrated* typed answer over a state you give it.
 
-Three roles, and the third one decides the outcome:
+Know what Jev is before you feed it. It is a structured predictor: it reads the state you wrote and
+spreads probability over the answers you declared. It holds no model of the world and no causal
+model in its weights, it reads your words literally, and it is reliable for about one step of
+inference. It cannot compute the gap between two timestamps, follow a defect two calls deep through
+a large file, or know on its own that reading a diff is not the same as running the code.
+Understanding did not vanish from this arrangement; it moved into the state, the question, and the
+code that combines the answers. That address is you.
 
-- **you generate** — you choose what to ask, and what to do with the answer.
-- **you witness** — you go out into the environment and carry back what Jev will see.
-- **Jev discriminates** — it collapses that state into a typed answer with a probability. It cannot
-  plan, cannot act, and never visits the scene.
+Four roles, and the middle two decide the outcome:
 
-The judge sees your evidence, never the world it came from. So the ceiling on the verdict is set by
-what you carried in, not by how well you asked. Keep the reasoning and the planning for yourself,
-and spend the real work on the evidence.
+- **you generate**: you choose what to ask, and what to do with the answer.
+- **you witness**: you go out into the environment and carry back what was there.
+- **you compile**: you turn what you carried into a state Jev can settle in one literal step, and
+  you bring the law it is judged under.
+- **Jev discriminates**: it collapses that state into a typed answer with a probability. It cannot
+  plan, cannot act, never visits the scene, and cannot supply a causal link you left out.
+
+The judge sees your state, never the world it came from. So the ceiling on the verdict is set by
+what you carried in and how you compiled it, not by how well you asked. Keep the reasoning and the
+planning for yourself, and spend the real work on the state.
 
 ## What "complete" means for a state
 
@@ -55,12 +65,39 @@ Jev cannot volunteer what is missing. It sees a state that looks whole, and a ho
 inside. It can only point at a hole you name as a candidate, which is what the probe below does.
 Closure is your work, and it is where the judgments actually go wrong.
 
-## Build the state: five moves
+Closure is half. The other half is **one hop**: the answer has to sit one literal step from the
+fields. A state can hold every decisive fact and still fail, because the fact is in a form Jev
+cannot read: two timestamps whose gap is the question, a defect buried in a file full of things
+the question does not need, an agent's summary standing where the output should be. Measured on
+three claims, each judged once in a world where it is true and once where it is false:
+
+| claim | what the state carried | true world | false world |
+|---|---|---|---|
+| retries wait at least 2.0 s | the raw log, 49 lines, other hosts interleaved | 0.37 | 0.29 |
+| retries wait at least 2.0 s | the same log, gaps computed by code | 0.86 | 0.02 |
+| exports skip soft-deleted rows | the whole source file, 18k chars, defect two calls deep | 0.89 | 0.27 |
+| exports skip soft-deleted rows | the three functions of the call chain, cut by code | 0.85 | 0.08 |
+| exports skip soft-deleted rows | the export run on a fixture holding one deleted row | 0.83 | 0.01 |
+| grouped amounts parse per spec | the agent's summary: "handles separators, all 12 tests pass" | 0.47 | 0.49 |
+
+Read each pair as a gap. The raw log cannot tell the broken retry loop from the working one; the
+computed gaps can, and at that point code can decide it outright, so the call is no longer needed.
+Source code is readable, but the false world creeps upward as the file fills with things the
+question does not need (0.08, then 0.27), and that is the direction a gate fails in. The summary
+cannot separate the worlds at all: it is your belief, and Jev is judging your belief.
+
+## Build the state: six moves
 
 **1. Scoop from the environment, not from memory.** Re-read the actual bytes now: the file, the tool
 output, the user's words. Retyping from memory is fabrication with a delay, and a field that
 misreads the source becomes a confident wrong number — the one failure no calibration can catch for
 you, because Jev never sees the source, only your field.
+
+Clean has one operational meaning here: nothing in the evidence was written by the party whose work
+is being judged. Every value in it came out of code you ran (keep the command beside it) or is a
+verbatim cut (keep its coordinates). The only field you author is the `claim`, and it has its own
+field so that your words never leak into the evidence. "Handles separators correctly, all tests
+pass" is the claim again, filed under evidence.
 
 Raw does not mean whole. When the decisive thing is larger than the state can hold — a 10,000-line
 log, a whole chapter, a 400-file diff — carry the *span*, not the artifact, and carry its
@@ -78,29 +115,83 @@ list of parts that cannot become a fact) is the
 of the judgment that stays with the human.
 
 Two things it hands you that matter here. The fact list is an **index, not evidence**: the state
-carries the raw span the decisive fact points at, so Jev can see whether the fact matches it. And
-filter before you judge: a fact no criterion touches is not judged, so only the handful that can
-move the answer needs its span carried.
+carries the evidence the decisive fact points at (the verbatim span, or the output code produced
+for it), so Jev can see whether the fact matches it. And filter before you judge: a fact no
+criterion touches is not judged, so only the handful that can move the answer needs its evidence
+carried.
 
 Then ask which of them can flip the answer. That one is the decisive difference, and it is what you
-go get. Two kinds of fact, and the difference matters:
+go get. What the claim asserts decides which receipt can carry it, and there are three rungs:
 
-- **Readable** — already sitting in the environment. Go read it.
-- **Producible** — a fact about behavior, which no amount of reading yields. You cannot carry back a
-  fact you never produced: run the thing, then scoop the output. This is why a claim about behavior
-  needs a receipt, not a source listing.
+- **What the artifact says**: read it. A span of the file, the config, the doc.
+- **What it does**: produce it. Behavior cannot be read out of source, however carefully; run the
+  thing, then scoop the output. This is why a claim about behavior needs a receipt, not a source
+  listing.
+- **What the change caused**: the same input, run before the change and after it. "Fixed",
+  "prevents", "broke", "made it faster" are claims about cause. A run after the change alone shows
+  the behavior now, not that the change produced it, because the input may never have failed.
+
+A receipt from a lower rung cannot carry a claim from a higher one, however well it is written.
+This is Pearl's ladder (seeing, doing, imagining) in working clothes. For deterministic code the
+before-and-after run on one input *is* the counterfactual, which is why the top rung is cheap in
+software and expensive nearly everywhere else. Jev will not climb the ladder for you; it has no
+causal model to climb with.
 
 When the artifact is a **change** (a diff, a revision), the facts are about the delta, and the
 standard is whatever the delta was supposed to accomplish.
 
-**3. Fetch the standard, verbatim, into its own field.** The standard is the contract, spec, canon,
-or policy the artifact has to satisfy. It is a fact about the world, so it belongs in the **state**,
-not in your question. Quote it from its source; do not paraphrase it into your own prose. Without
-it Jev does not abstain — it substitutes its own general taste for your contract and answers a
-question you did not ask. In the worked example below, the same raw receipt scores 0.72 without the
-standard and 0.06 with it.
+**3. Compile the decisive fact down to one hop.** Before it enters the state, do to it everything
+code can do:
 
-**4. Sweep for the counter.** A sweep is a search, not a glance at the file next door. Grep the
+- arithmetic, counts, time gaps, date order, sorting: compute them and carry the result, because
+  Jev reads numbers and dates as text;
+- behavior: run it (move 2), and carry the output of the run, not the source that would produce it;
+- a defect spread across several places: cut out only the path that matters (the call chain, the
+  changed hunk, the one config key), with coordinates;
+- anything Jev would have to generate (a value, a span): find the candidates in code and let Jev
+  choose among them.
+
+Then look at what is left. Often nothing is: the gap is under 2.0 seconds or it is not, and code
+has decided. There is no judgment to ask for. Jev earns its call on the residue that only reading
+can settle: whether an error message tells the user what to do next, whether a test exercises the
+path the bug lived on, whether a change acts on the cause the diagnosis shows.
+
+**4. Fetch the law, verbatim, into its own fields.** The law has two parts, and a state usually
+needs both.
+
+The **standard** is what the artifact has to satisfy: the contract, spec, canon, policy, or the
+user's words. It is a fact about the world, so it belongs in the **state**, not in your question.
+Quote it from its source; do not paraphrase it into your own prose. Without it Jev does not
+abstain: it substitutes its own general taste for your contract and answers a question you did not
+ask. In the worked example below, the same raw receipt scores 0.72 without the standard and 0.06
+with it.
+
+The **rule** is what observation establishes a claim of this kind, and why: the causal link from
+the evidence to the claim. Every claim you make about your own work is causal in the end (this
+change fixed that, this test shows that, this run means that), and Jev brings no causal model of
+its own. Leave the rule out and it falls back on common sense, which passes whatever sounds
+plausible. One claim, "commit 4c1e fixed the crash `summarize()` raised on empty input", four
+receipts, with and without one sentence of rule:
+
+| evidence | no rule | with rule |
+|---|---|---|
+| the diff: a guard added before `rows[0]` | **0.65** | 0.06 |
+| after the commit, `summarize([])` returned `{}` | 0.40 | 0.04 |
+| same input: raised `IndexError` before, returned `{}` after | 0.87 | 0.92 |
+| same input: returned `{}` before and after | 0.05 | 0.03 |
+
+The rule was: *"A change is shown to have fixed a failure only by running the same input twice: the
+failure occurs before the change and does not occur after it. Reading the diff shows what was
+edited, not what it does. A successful run after the change alone does not show a fix, because
+that input may never have failed."* Without it, reading your own diff passes as proof at 0.65,
+which is the most common false "fixed" there is. With it, Jev applies the ladder from move 2
+faithfully, because a stated rule is exactly what a literal reader follows well.
+
+Take the rule from a source when one exists: the project's testing policy, a spec's definition of
+done, the domain's own mechanism. When you write it yourself you are supplying causal structure, so
+write it as a rule anyone could check against any case, never as a verdict on this one.
+
+**5. Sweep for the counter.** A sweep is a search, not a glance at the file next door. Grep the
 environment for the artifact's identifier, and for supersession language — `supersedes`,
 `deprecated`, `no longer`, `removed in` — because a requirement can still be on the books after the
 reason for it is gone, and a fact that obsoletes the standard is a counter too. Then write the scope
@@ -110,17 +201,18 @@ empty counter, it is the hole wearing a label. The sweep ends when what is left 
 answer, not when the hits run out: two hundred grep results are swept the moment none of the
 remainder can move the verdict.
 
-**5. Re-scoop if the environment moved.** The state is a snapshot of something moving. Any field
+**6. Re-scoop if the environment moved.** The state is a snapshot of something moving. Any field
 taken before your last edit, last tool call, or last thing the user said may already be false.
 
-What falls out is five fields, and the names are the point:
+What falls out is six fields, and the names are the point:
 
 ```python
 state = {
     "facts":    ["...", "..."],  # every path, one line each; the whole bundle
-    "claim":    "...",           # the one fact from that list you are about to assert
-    "evidence": "...",           # the raw span it points at, unmodified
-    "standard": "...",           # the requirement, quoted from its source
+    "claim":    "...",           # the one fact from that list you are about to assert; the only field you write
+    "evidence": "...",           # compiled: values code computed and verbatim spans, each with its command or coordinates
+    "standard": "...",           # what the artifact must satisfy, quoted from its source
+    "rule":     "...",           # what observation establishes a claim of this kind, and why
     "counter":  "...",           # the best disconfirming fact, or "searched X, Y: none"
 }
 ```
@@ -130,11 +222,15 @@ you can see is a list you can check against the artifact. Everything else in the
 one fact you pulled out of it.
 
 Claim and evidence stay separate fields because Jev can only see the gap between them while they are
-apart. Merged, there is nothing left to check.
+apart. Merged, there is nothing left to check. Standard and rule stay apart for the same reason: one
+says what must be true, the other what would show it, and only while they are separate can Jev see
+a receipt from the wrong rung.
 
-Build the state once per environment, not once per question. Every criterion live at this moment is
-judged against the same state, so no two criteria end up measured against different worlds; a second
-scoop for the second criterion is a second world.
+Take one snapshot of the environment per gate, not one per question. Every criterion live at this
+moment is judged against that snapshot, so no two criteria end up measured against different
+worlds; a second scoop for the second criterion is a second world. When the snapshot is small, send
+it whole to every question. When it is too large to be one hop from each of them, cut a projection
+per criterion out of that same snapshot (move 3), never a fresh scoop.
 
 ## Close the state before you trust it
 
@@ -177,10 +273,20 @@ ans = await judge(state, {
 - `state`: a string, or better the object built above. This is everything Jev sees.
 - Three question types, mixed freely in one call, each answered in parallel and in isolation:
   - `bool` (Noul): probability 0..1 that a statement holds. Near 0.5 means genuinely unsure, not "medium intensity".
-  - `choice`: pick one label from `criteria`; returns `choice`, `probabilities`, `confidence`.
+  - `choice`: pick one label from `criteria`; returns `choice`, `probabilities`, `confidence`. It
+    settles *which* label wins, not how likely each one is: a coin stated as 60% heads came back
+    heads 0.99 as a `choice` and 0.58 as a `bool` (Arcturus Labs, 401 requests). When you need how
+    likely something is, ask a `bool`.
   - `score`: a level on an ordered rubric; returns `score`, `probabilities`, `confidence`.
 - `confidence` measures how concentrated the distribution is, not whether the answer is correct and not permission to act. Several good options can spread it; ignore it on branches you never use.
 - Many states at once: `judge_batch`. Adding questions to one call barely changes latency, so ask every independent question together rather than in a loop.
+- **A verdict fanned over many items needs an applicability question beside it.** A `bool` asking
+  whether an item meets a criterion returns false both for an item that breaks it and for one the
+  criterion never governed, so a batch reads every bystander as a failure. One coding rule fanned
+  over sixteen functions of a module flagged thirteen, ten of them functions it never governed; an
+  `applies` question in the same call cut the flags to three. Gate on both in your own code, and word
+  the applicability by what the item handles, not by what the criterion demands, or the violation
+  that skips the demanded step stops applying (0.44 against 0.95 for the compliant item).
 - **Do not ask what code decides exactly.** A count, a checksum, a parse, a threshold, a diff, a
   sort order — if a deterministic check can settle it, run that check instead. Jev is for the part
   where code cannot decide, and spending a judgment on arithmetic you could have executed buys a
@@ -203,10 +309,12 @@ the script is executed, never pasted into context. Enumerating an artifact into 
 the `clerk.py` script for code) lives in `decompose-facts`.
 
 - **The gatekeeper, always**: `from verify import verify`, then
-  `await verify(judge, facts=..., claim=..., evidence=..., standard=..., counter=..., questions=...,
-  pairs={"claim_holds": "claim_fails"})`.
+  `await verify(judge, facts=..., claim=..., evidence=..., standard=..., rule=..., counter=...,
+  questions=..., pairs={"claim_holds": "claim_fails"})`.
   It refuses a state with a blank field, a one-entry fact list, or a counter that names no scope,
-  and it reports the sums of any declared pair so a contradictory pair cannot pass unnoticed.
+  and it reports the sums of any declared pair so a contradictory pair cannot pass unnoticed. It
+  warns when the evidence names no command, output, or coordinates (a summary wearing the evidence
+  label), and when the claim asserts a cause (fixed, prevents, works) with no `rule`.
   Declare the pair whenever the two ids do not follow the `not_<id>` convention, because nothing
   mechanical recognises an antonym. Use it in place of calling `judge` directly.
 - **The comprehension check, before you commit to what the user meant**:
@@ -226,7 +334,7 @@ the `clerk.py` script for code) lives in `decompose-facts`.
 
 ## Ask the right question, not just ask it well
 
-The five moves get a state *complete*. They do not make it the *right* state, and a clean answer
+The six moves get a state *complete*. They do not make it the *right* state, and a clean answer
 over the wrong state is the expensive failure. You choose what to ask and you write the `criteria`
 inside the question, so a confident all-green can just mean you tried the artifact on the wrong
 charges. You cannot repair this by asking Jev "is my question right?" — that is one more judgment
@@ -245,7 +353,11 @@ only outside Jev, at the source of the goal.
 - **Compose the answers in your own code.** A judgment that turns on several factors is several
   questions, and the combination is arithmetic you own, with weights you can change and re-run
   without re-asking. Jev returns per-factor signals and never the composite, so "rate this pitch" is
-  the wrong question and "market size, feasibility, differentiation" is three right ones.
+  the wrong question and "market size, feasibility, differentiation" is three right ones. The
+  causal structure between the factors lives here too, so write it as the logic it is: when one
+  unmet factor sinks the whole, take the minimum or an AND; when two signals matter only together,
+  test them together. A weighted sum quietly assumes the factors act independently, and it will
+  average away exactly the combination that mattered.
 - **Run the negative probe — the highest-value move.** Ask *yourself*, not Jev: if every one of
   these checks came back green, what is the most plausible way the real goal is still unmet? If you
   can name a scenario, you are missing a question; add it. It costs no call and catches the common
@@ -313,7 +425,7 @@ hand it to Jev as a `choice` (see *Choose the next move*). This is not its own m
 the three above.
 
 **Before any of them — reconcile first.** Each of these fires on evidence you are about to trust.
-Re-read the actual artifact and confirm the state matches what you are looking at now (move 5).
+Re-read the actual artifact and confirm the state matches what you are looking at now (move 6).
 Skip it and a misread becomes a confident wrong number — the one failure a calibrated pass cannot
 catch for you.
 
