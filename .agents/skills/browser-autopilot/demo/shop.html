@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Harbor Supply</title>
+<style>
+:root {
+  --bg: #f6f5f2; --surface: #ffffff; --ink: #1d1f23; --muted: #6b6f76; --line: #e3e1dc;
+  --accent: #1f5f4a; --accent-ink: #ffffff; --accent-soft: #e4efe9; --danger: #b3261e;
+  --radius: 10px; --gap: 16px;
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 var(--font); }
+header { display: flex; align-items: center; justify-content: space-between; padding: 14px 32px;
+  background: var(--surface); border-bottom: 1px solid var(--line); }
+.brand { font-weight: 700; letter-spacing: .2px; font-size: 17px; }
+.brand span { color: var(--accent); }
+nav { display: flex; gap: 18px; align-items: center; color: var(--muted); }
+nav a { color: var(--ink); text-decoration: none; }
+.clock { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 13px; }
+main { max-width: 980px; margin: 32px auto; padding: 0 24px; }
+h1 { font-size: 26px; margin: 0 0 6px; }
+.sub { color: var(--muted); margin: 0 0 22px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 22px; }
+.narrow { max-width: 420px; }
+label { display: block; font-weight: 600; font-size: 13px; margin: 14px 0 6px; }
+input[type=text], input[type=email], input[type=password], input[type=number], input[type=search], select {
+  width: 100%; padding: 10px 12px; font: inherit; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.row { display: grid; grid-template-columns: 1fr 1fr; gap: var(--gap); }
+.inline { display: flex; align-items: center; gap: 8px; font-weight: 500; margin: 8px 0; }
+button { font: inherit; font-weight: 600; padding: 10px 18px; border-radius: 8px; border: 1px solid var(--accent);
+  background: var(--accent); color: var(--accent-ink); cursor: pointer; }
+button.ghost { background: var(--surface); color: var(--accent); }
+.actions { display: flex; gap: 10px; margin-top: 20px; }
+.err { color: var(--danger); font-weight: 600; min-height: 22px; margin-top: 10px; }
+.toolbar { display: flex; gap: 12px; align-items: center; margin-bottom: 18px; }
+.toolbar input { flex: 1; }
+.chips { display: flex; gap: 8px; margin-bottom: 20px; }
+.chips button { background: var(--surface); color: var(--ink); border-color: var(--line); font-weight: 500; }
+.chips button[aria-pressed=true] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--gap); }
+.product h3 { margin: 10px 0 2px; font-size: 16px; }
+.product .price { color: var(--muted); margin-bottom: 12px; }
+.swatch { height: 110px; border-radius: 8px; }
+.detail { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; }
+.detail .swatch { height: 260px; }
+.line { display: flex; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.total { font-weight: 700; font-size: 17px; }
+.note { background: var(--accent-soft); color: var(--accent); padding: 10px 14px; border-radius: 8px; margin-bottom: 16px; }
+.muted { color: var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">Harbor <span>Supply</span></div>
+  <nav id="nav"></nav>
+</header>
+<main id="app"></main>
+<script>
+const PRODUCTS = [
+  { id: 'backpack', name: 'Blue Backpack',  cat: 'Bags',       price: 49, color: '#3d6ea8', sizes: null },
+  { id: 'tote',     name: 'Canvas Tote',    cat: 'Bags',       price: 22, color: '#c8b58e', sizes: null },
+  { id: 'jacket',   name: 'Red Jacket',     cat: 'Outerwear',  price: 89, color: '#b8433a', sizes: ['S', 'M', 'L', 'XL'] },
+  { id: 'vest',     name: 'Grey Vest',      cat: 'Outerwear',  price: 59, color: '#8a8f96', sizes: ['S', 'M', 'L'] },
+  { id: 'bottle',   name: 'Green Bottle',   cat: 'Drinkware',  price: 15, color: '#3f8a5c', sizes: null },
+  { id: 'mug',      name: 'Enamel Mug',     cat: 'Drinkware',  price: 12, color: '#e6e1d6', sizes: null },
+];
+// State lives in sessionStorage so a page reload (a driver re-opening the tab) keeps the sign-in,
+// the cart and the session clock, as a real shop's server-side session would.
+const S = JSON.parse(sessionStorage.getItem('hs-state') || 'null') || { user: null, cart: [], cat: 'All', q: '', order: null };
+const save = () => sessionStorage.setItem('hs-state', JSON.stringify(S));
+const $ = s => document.querySelector(s);
+const money = n => '$' + n.toFixed(2);
+const go = h => { location.hash = h; };
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+const t0 = +(sessionStorage.getItem('hs-t0') || (sessionStorage.setItem('hs-t0', Date.now()), Date.now()));
+setInterval(() => {
+  const s = Math.floor((Date.now() - t0) / 1000), el = $('#clock');
+  if (el) el.textContent = 'Session ' + Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+}, 250);
+
+function nav() {
+  save();
+  const n = S.cart.reduce((a, l) => a + l.qty, 0);
+  $('#nav').innerHTML = (S.user
+    ? `<span class="muted">${esc(S.user)}</span><a href="#shop">Shop</a><a href="#cart">Cart (${n})</a>`
+    : '') + `<span class="clock" id="clock" aria-hidden="true"></span>`;
+}
+
+function render() {
+  const [view, arg] = (location.hash.slice(1) || 'login').split('/');
+  if (!S.user && view !== 'login') return go('login');
+  nav();
+  (VIEWS[view] || VIEWS.login)(arg);
+  window.scrollTo(0, 0);
+}
+
+const VIEWS = {
+  login() {
+    $('#app').innerHTML = `
+      <h1>Sign in</h1><p class="sub">Use your Harbor Supply account.</p>
+      <form class="card narrow" id="f" novalidate>
+        <label for="u">Username</label><input id="u" type="text" autocomplete="username">
+        <label for="p">Password</label><input id="p" type="password" autocomplete="current-password">
+        <label class="inline"><input type="checkbox" id="rm"> Keep me signed in</label>
+        <div class="actions"><button type="submit">Sign in</button></div>
+        <div class="err" id="err" role="alert"></div>
+      </form>`;
+    $('#f').onsubmit = e => {
+      e.preventDefault();
+      if ($('#u').value.trim() === 'demo_user' && $('#p').value === 'harbor-2026') { S.user = 'demo_user'; go('shop'); }
+      else $('#err').textContent = 'Wrong username or password.';
+    };
+  },
+
+  shop() {
+    const list = PRODUCTS.filter(p => (S.cat === 'All' || p.cat === S.cat) &&
+      p.name.toLowerCase().includes(S.q.toLowerCase()));
+    $('#app').innerHTML = `
+      <h1>Shop</h1><p class="sub">Everyday gear, shipped from Singapore.</p>
+      <form class="toolbar" id="sf" role="search">
+        <input type="search" id="q" aria-label="Search products" placeholder="Search products" value="${esc(S.q)}">
+        <button type="submit" class="ghost">Search</button>
+      </form>
+      <div class="chips" role="group" aria-label="Category">
+        ${['All', 'Bags', 'Outerwear', 'Drinkware'].map(c =>
+          `<button type="button" data-cat="${c}" aria-pressed="${S.cat === c}">${c}</button>`).join('')}
+      </div>
+      <div class="grid">
+        ${list.map(p => `
+          <article class="card product">
+            <div class="swatch" style="background:${p.color}"></div>
+            <h3>${p.name}</h3><div class="price">${money(p.price)} · ${p.cat}</div>
+            <a href="#product/${p.id}">View details</a>
+          </article>`).join('') || '<p class="muted">No products match.</p>'}
+      </div>`;
+    $('#sf').onsubmit = e => { e.preventDefault(); S.q = $('#q').value; render(); };
+    document.querySelectorAll('[data-cat]').forEach(b => b.onclick = () => { S.cat = b.dataset.cat; render(); });
+  },
+
+  product(id) {
+    const p = PRODUCTS.find(x => x.id === id);
+    if (!p) return go('shop');
+    $('#app').innerHTML = `
+      <p><a href="#shop">← Back to shop</a></p>
+      <div class="detail">
+        <div class="swatch" style="background:${p.color}"></div>
+        <div>
+          <h1>${p.name}</h1><p class="sub">${money(p.price)} · ${p.cat}</p>
+          ${p.sizes ? `<label for="size">Size</label>
+            <select id="size"><option value="">Choose a size</option>${p.sizes.map(s => `<option value="${s}">${s}</option>`).join('')}</select>` : ''}
+          <label for="qty">Quantity</label><input id="qty" type="number" min="1" max="9" value="1">
+          <div class="actions"><button id="add" type="button">Add to cart</button></div>
+          <div class="err" id="err" role="alert"></div>
+        </div>
+      </div>`;
+    $('#add').onclick = () => {
+      const size = p.sizes ? $('#size').value : null, qty = Math.max(1, parseInt($('#qty').value || '1', 10));
+      if (p.sizes && !size) { $('#err').textContent = 'Choose a size first.'; return; }
+      const same = S.cart.find(l => l.id === p.id && l.size === size);
+      if (same) same.qty += qty; else S.cart.push({ id: p.id, name: p.name, price: p.price, size, qty });
+      nav();
+      $('#err').outerHTML = `<div class="note" role="status">Added ${qty} × ${p.name}${size ? ' (size ' + size + ')' : ''} to your cart.</div>`;
+    };
+  },
+
+  cart() {
+    const sub = S.cart.reduce((a, l) => a + l.price * l.qty, 0);
+    $('#app').innerHTML = `
+      <h1>Your cart</h1><p class="sub">${S.cart.length ? 'Review your items before checkout.' : 'Your cart is empty.'}</p>
+      <div class="card">
+        ${S.cart.map((l, i) => `
+          <div class="line"><span>${l.qty} × ${l.name}${l.size ? ' · size ' + l.size : ''}</span>
+          <span>${money(l.price * l.qty)} <button type="button" class="ghost" data-rm="${i}" aria-label="Remove ${l.name}">Remove</button></span></div>`).join('')}
+        <div class="line total"><span>Subtotal</span><span>${money(sub)}</span></div>
+        <div class="actions"><a href="#shop">Continue shopping</a>
+          ${S.cart.length ? '<button id="co" type="button">Proceed to checkout</button>' : ''}</div>
+      </div>`;
+    document.querySelectorAll('[data-rm]').forEach(b => b.onclick = () => { S.cart.splice(+b.dataset.rm, 1); render(); });
+    if ($('#co')) $('#co').onclick = () => go('checkout');
+  },
+
+  checkout() {
+    if (!S.cart.length) return go('cart');
+    $('#app').innerHTML = `
+      <h1>Checkout</h1><p class="sub">Shipping details for ${S.cart.reduce((a, l) => a + l.qty, 0)} item(s).</p>
+      <form class="card" id="cf" novalidate>
+        <div class="row">
+          <div><label for="fn">Full name</label><input id="fn" type="text" autocomplete="name"></div>
+          <div><label for="em">Email</label><input id="em" type="email" autocomplete="email"></div>
+        </div>
+        <label for="ad">Street address</label><input id="ad" type="text" autocomplete="street-address">
+        <div class="row">
+          <div><label for="ci">City</label><input id="ci" type="text" autocomplete="address-level2"></div>
+          <div><label for="co">Country</label>
+            <select id="co"><option value="">Choose a country</option>
+              <option value="SG">Singapore</option><option value="VN">Vietnam</option>
+              <option value="TH">Thailand</option><option value="JP">Japan</option></select></div>
+        </div>
+        <fieldset style="border:0;padding:0;margin:16px 0 0"><legend style="font-weight:600;font-size:13px">Shipping</legend>
+          <label class="inline"><input type="radio" name="ship" value="standard" checked> Standard, 5–7 days, free</label>
+          <label class="inline"><input type="radio" name="ship" value="express"> Express, 1–2 days, $12.00</label>
+        </fieldset>
+        <label class="inline"><input type="checkbox" id="tos"> I agree to the terms of sale</label>
+        <div class="actions"><button type="submit">Place order</button></div>
+        <div class="err" id="err" role="alert"></div>
+      </form>`;
+    $('#cf').onsubmit = e => {
+      e.preventDefault();
+      const f = { name: $('#fn').value.trim(), email: $('#em').value.trim(), address: $('#ad').value.trim(),
+        city: $('#ci').value.trim(), country: $('#co').value, ship: document.querySelector('[name=ship]:checked').value };
+      const miss = Object.entries(f).filter(([, v]) => !v).map(([k]) => k);
+      if (miss.length) { $('#err').textContent = 'Please fill: ' + miss.join(', ') + '.'; return; }
+      if (!/^\S+@\S+\.\S+$/.test(f.email)) { $('#err').textContent = 'Enter a valid email.'; return; }
+      if (!$('#tos').checked) { $('#err').textContent = 'Please agree to the terms of sale.'; return; }
+      const sub = S.cart.reduce((a, l) => a + l.price * l.qty, 0), fee = f.ship === 'express' ? 12 : 0;
+      S.order = { ...f, country: $('#co').selectedOptions[0].text, items: S.cart.map(l => ({ ...l })),
+        total: sub + fee, no: 'HS-' + String(Math.floor(100000 + Math.random() * 900000)) };
+      S.cart = [];
+      go('done');
+    };
+  },
+
+  done() {
+    const o = S.order;
+    if (!o) return go('shop');
+    // Tells record.sh the flow finished (a 404 line in the server log is the signal).
+    fetch('/__order_placed?' + o.no).catch(() => {});
+    $('#app').innerHTML = `
+      <h1>Order confirmed</h1><p class="sub">Order ${o.no} · a receipt is on its way to ${esc(o.email)}.</p>
+      <div class="card">
+        ${o.items.map(l => `<div class="line"><span>${l.qty} × ${l.name}${l.size ? ' · size ' + l.size : ''}</span><span>${money(l.price * l.qty)}</span></div>`).join('')}
+        <div class="line"><span>Shipping: ${o.ship === 'express' ? 'Express' : 'Standard'}</span><span>${o.ship === 'express' ? money(12) : 'Free'}</span></div>
+        <div class="line total"><span>Total</span><span>${money(o.total)}</span></div>
+        <p>Ships to ${esc(o.name)}, ${esc(o.address)}, ${esc(o.city)}, ${esc(o.country)}.</p>
+      </div>`;
+  },
+};
+
+addEventListener('hashchange', render);
+render();
+</script>
+</body>
+</html>

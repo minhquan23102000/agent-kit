@@ -37,19 +37,24 @@ design verification use a vision model on a screenshot, not this.
 ```python
 exec(read(".agents/skills/browser-autopilot/autopilot.py"))
 r = await autopilot.run(
-    "https://en.wikipedia.org/wiki/Main_Page",
-    "Find and open the Wikipedia article about Gödel's incompleteness theorems.",
+    "https://shop.example/",
+    "Buy the Blue Backpack and the Green Bottle for Nguyen Van A, shipping to Vietnam.",
+    steps=["Sign in with the username and password", "Add the Blue Backpack to the cart",
+           "Add the Green Bottle to the cart", "Open the cart and start checkout",
+           "Fill full name and choose the country", "Place the order"],
+    facts={"username": "demo_user", "password": "…", "full_name": "Nguyen Van A", "country": "Vietnam"},
+    done_when="A thank-you page confirms the order with exactly those two items.",
 )
-# r: {status, reason, needs_professor, final_url, final_title, steps, tab, trace,
-#     capture_dir?, screenshots?}
+# r: {status, reason, needs_professor, final_url, final_title, steps, tab, trace, history,
+#     plan?, plan_step?, capture_dir?, screenshots?, recording?}
 ```
 
 - **You own the goal and the review.** When `r["needs_professor"]` is true (status `escalate`,
   `blocked`, `error`, or `budget`), the run stopped and left the tab open (`r["tab"]`) for you to
   take over with the ordinary `browser` helpers. On a clean `done` the tab is closed.
 - **A `done` is verified independently** before it is trusted: a separate read-only `judge` call
-  re-scoops the page and asks whether the goal is truly met (plus its negation). A `done` the
-  verifier rejects becomes an `escalate`, not a success. Never trust the loop's own `DONE`.
+  re-scoops the page and asks whether the goal (and `done_when`) is truly met, plus its negation.
+  A `done` the verifier rejects becomes an `escalate`, not a success. Never trust the loop's own `DONE`.
 - Tune with `conf_floor` (escalate below this operation confidence), `max_steps`, `verify=False`,
   `close="keep"|"auto"`, `wait_timeout` (seconds for explicit WAIT, default 5.0).
 - **Capture mode**: `capture=True` saves a viewport screenshot at every step to an auto-created
@@ -58,6 +63,74 @@ r = await autopilot.run(
   trace record gets a `screenshot` field with the file path.
 - **Attach to an open tab** with `url=None` to act on the page already loaded (named by
   `tab_name`) instead of navigating — needed for a stateful, multi-goal session on one page.
+
+## Give Jev a plan, the facts, and what done looks like
+
+A goal alone makes Jev guess, at every step, how far the flow has come. Three arguments remove the
+guess; write them whenever the flow has more than two or three actions:
+
+- **`steps`** - the plan, in order, one page action or short stretch per step ("Type the
+  username", "Click Log in", "Add the Green Bottle to the cart"). Each step, a first Jev question
+  decides which plan step is current from the page and the actions so far; the operation and
+  target questions then work on that step only. A step that bundles several actions ("Sign in")
+  works, but Jev may order them wrongly (it once clicked Log in before filling the fields); split
+  where order matters. `r["plan_step"]` says where the run stopped. The step budget
+  (`max_steps`) defaults to twice the plan plus four.
+- **`facts`** - values the flow needs that are not on the page: credentials, the name and
+  address, an exact query. Give one fact per form field (`street_address`, `city`, `country`), not
+  one `address` string: a whole address went into Street once and City stayed empty. When you do
+  not know a form's fields, observe the form before writing the steps. TYPE_TEXT uses a fact
+  exactly when one holds the value; a plain search term it may infer from the goal, but
+  credentials and personal data it never invents: without the fact it returns no value and the run
+  stops with `exec_error`. Fields named like a password are masked in the trace and log.
+- **`done_when`** - what the finished page shows. Both DONE and the verifier judge against it.
+
+Jev sees what each field holds (`= "Nguyen Van A"`, `= (empty)`, a password as `(filled)`), so a
+half-filled form is visible to it, not only to you.
+
+Jev also sees every earlier action in plain words (`CLICK button "Add to cart" (Green Bottle) →
+page changed`, `CLICK button "Log in" → went to "Products" (/#shop)`), not element ids that go
+stale after each page change. `r["history"]` holds those lines; pass `history=r["history"]` to a
+follow-up call on the same tab (`url=None`) so it knows what the previous goal already did.
+A typed value is recorded by the fact it came from (`= "••••••••" (facts.password)`). When a
+follow-up corrects a value, give it a new fact name (`correct_password`): under the old name Jev
+reads the field as already holding it and skips the step.
+
+## Demo mode: show what Jev decides
+
+`demo=True` opens a visible browser, draws Jev's decision on the page each step, holds it for
+`pause` seconds (1.2) before acting, types key by key (`type_delay` 45 ms), and keeps the tab
+open at the end. On the page:
+
+- every candidate element gets a box coloured by what it can take (blue click, green type, amber
+  select), tinted by Jev's probability for it; the top three carry their percentage;
+- the chosen target is pink, labelled with the operation and its probability; a ring pulses where
+  the click lands;
+- a panel shows the goal, the plan with done/current/pending steps, the operation probabilities,
+  the decision line, then "Verifying…" and the final verdict or the hand-back reason. It moves
+  aside when it would cover the chosen target.
+
+The layer sits outside `<body>`, aria-hidden and click-through, so Jev never reads it and clicks
+pass through it. `overlay=True` turns on only the drawing. `record="run.mp4"` records the tab for
+the whole run (`r["recording"]`). With `capture` on, each step also saves a `_decide` frame with
+the overlay drawn, before the action.
+
+`demo/` holds a local shop with a full flow (sign-in, search, product options, cart, a checkout
+form with a dropdown, radio and checkbox, confirmation) and `demo/record.py`. In an eval kernel,
+`exec(read(".agents/skills/browser-autopilot/demo/record.py")); await record_take("with")` (or
+`"without"`) has an omp session do the same task with this skill or without it, and writes a
+1920x1080 video, shop on the left and the agent's terminal on the right, into
+`~/Desktop/autopilot-demo/`. The terminal is omp in a real pseudo-terminal, shown as a page by
+`demo/webterm.py` (xterm.js from `~/.omp/vendor/xterm`: `bun add @xterm/xterm@5 @xterm/addon-fit`
+there once). Both halves are recorded by Chrome's own screencast, so no screen-recording
+permission or admin right is needed. The display must stay awake: when the Mac's display sleeps,
+Chrome stops painting and screenshots and screencasts hang with no error. `record.py` holds
+`caffeinate -d -u` for the take; do the same around any other capture.
+
+Demo mode is slow on purpose, so a demo take is not a timing benchmark. On this shop (29/9, Opus
+5.5) the with take used 5 Opus turns and $0.07 of Opus (Jev not counted) in 2m09s; the without
+take used 17 turns and $0.30 in 1m18s, because Opus batched several actions per call. Compare
+time with `demo=False`.
 
 ## How much to hand over per call
 

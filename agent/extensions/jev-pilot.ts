@@ -5,8 +5,12 @@
  *            pilot_set_goal. Jev scores each open question by blast radius: high goes to the
  *            user, low the agent decides. The USER agrees; Jev only sorts their reply into
  *            confirm, amend, reject, or other.
- * solution   the agent reads solution-confidence.md, consults an oracle, then pilot_propose.
- *            Jev scores the approach per criterion as a warning, never a block.
+ * solution   the agent reads solution-confidence.md, drafts the approach, then pilot_propose. Jev
+ *            reads it with the measured questions (at_cause, each criterion, waste). Jev only ever
+ *            lets the agent skip the oracle: when every question passes and a wrong approach would
+ *            not cost the structure, execution starts at once. Any doubt, or Jev unreachable, sends
+ *            the agent to a light oracle; a structural approach to the full oracle. After an oracle
+ *            has answered, the next proposal is recorded with Jev's doubts as warnings only.
  * execution  stuck detection in code.
  * review     any stop that is not a question for the user sends the agent to verify each
  *            criterion (review-verification.md advised) and cite the tool output per criterion
@@ -101,14 +105,20 @@ const STOP_KIND = {
     other: "anything else: a result, a report, a summary, a plan, or a description of what comes next",
   },
 };
+// Verbatim from solution-confidence.md; needs `diagnosis` in the state or it judges plausibility.
+const AT_CAUSE = {
+  type: "noul" as const,
+  instructions: "The change in `solution` acts on the cause shown in `diagnosis`, rather than suppressing, avoiding, or working around the symptom.",
+  criteria: { true: "it changes the code at the cause the diagnosis shows", false: "it hides the symptom, or changes something the diagnosis does not implicate" },
+};
 const WASTE = {
   type: "score" as const,
-  instructions: "If the approach in `approach` turns out to be WRONG, how much of the execution it commits would be wasted?",
+  instructions: "If the approach in `solution` turns out to be WRONG, how much of the execution it commits would be wasted?",
   criteria: ["one line or one function", "one module or one feature", "the structure of the whole application"] as const,
 };
 const approachMeets = (i: number) => ({
   type: "noul" as const,
-  instructions: `Executing \`approach\` as written would satisfy \`criteria[${i}]\`.`,
+  instructions: `Executing \`solution\` as written would satisfy \`criteria[${i}]\`.`,
   criteria: { true: "the approach as written delivers this criterion", false: "the approach misses it, contradicts it, or does not say enough to tell" },
 });
 const evidenceMeets = (i: number) => ({
@@ -158,8 +168,9 @@ function chosen(a: Answers, key: string): string {
 }
 const pct = (x: number | undefined) => (x === undefined ? "?" : `${Math.round(x * 100)}%`);
 const reply = (lines: string[]) => ({ content: [{ type: "text" as const, text: lines.join("\n") }] });
-/** An oracle's answer, as it appears in the transcript once a consultation completes. */
-const ORACLE_ANSWER = /<task-result[^>]*agent="oracle"[^>]*status="completed"/;
+/** An oracle's answer (either tier), as it appears in the transcript once a consultation completes. */
+const ORACLE_ANSWER = { "oracle-light": /<task-result[^>]*agent="oracle(-light)?"[^>]*status="completed"/, oracle: /<task-result[^>]*agent="oracle"[^>]*status="completed"/ };
+type Oracle = keyof typeof ORACLE_ANSWER;
 const MUTATING = new Set(["edit", "write", "ast_edit"]);
 
 // --- extension ----------------------------------------------------------------
@@ -172,6 +183,7 @@ export default function jevPilot(pi: ExtensionAPI) {
     draft: null as { goal: string; criteria: Criterion[]; asked: Record<string, { question: string; "a (draft assumes)": string; b: string }> } | null,
     awaitingUser: false,
     lockedAt: 0, proposed: false,
+    oracleNeeded: null as Oracle | null,  // set by Jev at the first proposal; cleared once that oracle answered
     criterionScores: [] as (number | undefined)[],
     why: [] as string[],            // per criterion, what Jev judged when it said no: shown to the user
     approach: null as string | null,
@@ -344,7 +356,7 @@ export default function jevPilot(pi: ExtensionAPI) {
       const update = s.goal !== null;
       Object.assign(s, {
         draft: { goal: params.goal, criteria: params.criteria, asked: Object.fromEntries(toUser.map((q, i) => [`D${i + 1}`, { question: q.question, "a (draft assumes)": q.reading, b: q.rival }])) },
-        awaitingUser: true, proposed: false, reviewInjected: false, blockCount: 0, criterionScores: [], why: [], newWords: [], cited: [], lastReply: null,
+        awaitingUser: true, proposed: false, oracleNeeded: null, reviewInjected: false, blockCount: 0, criterionScores: [], why: [], newWords: [], cited: [], lastReply: null,
       });
       setPhase("goal");
       const counts = [toUser.length ? `${toUser.length} to you` : "", toAgent.length ? `${toAgent.length} decided` : ""].filter(Boolean).join(", ");
@@ -363,48 +375,72 @@ export default function jevPilot(pi: ExtensionAPI) {
   });
 
   // =====================================================================
-  // pilot_propose: after the consultation; Jev warns, never blocks
+  // pilot_propose: Jev reads the approach and decides whether an oracle must see it first
   // =====================================================================
 
+  // Jev is a cheap reader and often wrong, so its word only ever removes the oracle when every
+  // measured question passes; any doubt, a missing answer, or Jev unreachable keeps a review. Once
+  // an oracle is asked for, re-proposing cannot undo it: a reworded approach does not re-roll Jev.
+  const consult = (who: Oracle, why: string) => reply([
+    `Not recorded yet: ${why}`,
+    `Call \`task\` with agent "${who}", giving it the diagnosis, what you found, and this approach; ask what is wrong with it. The pilot adds the goal. Wait for its answer, revise, then call \`pilot_propose\` again.`,
+  ]);
   pi.registerTool({
     name: "pilot_propose",
     label: "Propose Approach",
-    description: "jev-pilot: after consulting an oracle, submit the approach; Jev flags criteria it would miss before you execute.",
+    description: "jev-pilot: submit the approach with its diagnosis. Jev reads it: a clear, contained approach executes at once; otherwise you are sent to an oracle (light or full) first.",
     parameters: z.object({
-      approach: z.string().describe("The approach, specific enough to execute without asking, revised from the oracle's answer"),
+      diagnosis: z.string().describe("The raw observation the approach acts on: the error, failing row, or the file:line and function the change must touch. Not a paraphrase."),
+      approach: z.string().describe("The approach, specific enough to execute without asking; after an oracle, revised from its answer"),
     }),
     async execute(_id, params, _signal, _onUpdate, ctx) {
       if (!state.active || !state.goal) return reply([`jev-pilot is not waiting for an approach (phase: ${state.phase}${state.awaitingUser ? ", the goal is waiting for the user" : ""}).`]);
       if (!state.refsRead.has(SOLUTION_REF)) return reply([`Not recorded: read \`${REF}/${SOLUTION_REF}\` first, then propose again.`]);
-      if (!ORACLE_ANSWER.test(branchText(ctx, state.lockedAt))) {
-        return reply([
-          "Not recorded: no oracle has answered since the goal was agreed.",
-          'Call `task` with agent "oracle", giving it the goal, what you found, and this approach, asking what is wrong with it. Wait for its answer, revise, then call `pilot_propose` again.',
-        ]);
-      }
       const s = state;
+      const need = s.oracleNeeded;
+      if (need && !ORACLE_ANSWER[need].test(branchText(ctx, s.lockedAt))) return consult(need, `Jev asked for the ${need} and it has not answered since.`);
+      const consulted = need !== null;
       render(ctx, "Jev reading the approach");
-      const questions: Questions = { waste: WASTE };
+      const questions: Questions = { waste: WASTE, at_cause: AT_CAUSE };
       // Full criteria stay in the state so `criteria[i]` indexes match; only product criteria are asked.
       const product = s.criteria.flatMap((c, i) => (c.kind === "process" ? [] : [i]));
       product.forEach((i) => { questions[`c${i}`] = approachMeets(i); });
-      const a = await ask({ goal: s.goal, criteria: s.criteria.map(c => c.criterion), approach: params.approach }, questions);
+      const a = await ask({ goal: s.goal, criteria: s.criteria.map(c => c.criterion), diagnosis: params.diagnosis, solution: params.approach }, questions);
       if (state !== s) return reply(["jev-pilot was reset while the approach was being read."]);
+      const scores = a ? s.criteria.map((_, i) => noul(a, `c${i}`)) : [];
+      const atCause = a ? noul(a, "at_cause") : undefined;
+      const structure = a ? probability(a, "waste", "2") : undefined;
+      const doubts = [
+        ...(a && (atCause ?? 0) < PASS ? [`- aimed at the cause in the diagnosis (${pct(atCause)})`] : []),
+        ...product.flatMap(i => ((scores[i] ?? 0) < PASS ? [`- ${s.criteria[i].label} (${pct(scores[i])})`] : [])),
+      ];
+
+      if (!consulted) {
+        const who: Oracle | null = !a || doubts.length ? ((structure ?? 0) > STRUCTURE_WARN ? "oracle" : "oracle-light")
+          : (structure ?? 1) > STRUCTURE_WARN ? "oracle" : null;
+        if (who) {
+          s.oracleNeeded = who;
+          render(ctx, `→ ${who}`);
+          return consult(who, !a ? "Jev was unreachable, so a reviewer reads the approach instead."
+            : [doubts.length ? `Jev doubts:\n${doubts.join("\n")}\n(Jev is a quick reader and can be wrong; the oracle decides.)` : "",
+              (structure ?? 0) > STRUCTURE_WARN ? `If it is wrong it costs the structure (${pct(structure)}).` : ""].filter(Boolean).join("\n"));
+        }
+      }
+
       s.proposed = true;
       s.approach = params.approach;
       setPhase("execution");
       if (!a) {
         render(ctx, "Jev unreachable");
-        return reply(["Recorded; Jev was unreachable, so the approach was not read. Execute, and verify each criterion yourself."]);
+        return reply(["Recorded after the oracle; Jev was unreachable for the re-read. Execute, and verify each criterion yourself."]);
       }
-      s.criterionScores = s.criteria.map((_, i) => noul(a, `c${i}`));
-      s.why = s.criteria.map((_, i) => (product.includes(i) && (s.criterionScores[i] ?? 0) < PASS ? "plan only" : ""));
-      const doubts = product.flatMap(i => ((s.criterionScores[i] ?? 0) < PASS ? [`- ${s.criteria[i].label} (${pct(s.criterionScores[i])})`] : []));
-      const structure = probability(a, "waste", "2");
-      render(ctx, product.length ? `Jev ${doubts.length ? "⚠" : "✓"}${product.length - doubts.length}/${product.length}` : "");
+      s.criterionScores = scores;
+      s.why = s.criteria.map((_, i) => (product.includes(i) && (scores[i] ?? 0) < PASS ? "plan only" : ""));
+      const met = product.filter(i => (scores[i] ?? 0) >= PASS).length;
+      render(ctx, `${consulted ? need : "no oracle"} · Jev ${doubts.length ? "⚠" : "✓"}${met}/${product.length}`);
       return reply([
-        "Recorded. Execute it.",
-        ...(doubts.length ? ["Jev doubts the approach as written delivers these. Revise if it has a point; if you disagree, proceed and say why in your report:", ...doubts] : []),
+        consulted ? "Recorded. Execute it." : "Recorded without an oracle: Jev found the approach aimed at the cause, meeting every criterion, and contained. Execute it.",
+        ...(doubts.length ? ["Jev still doubts these after the oracle. Revise if it has a point; if you disagree, proceed and say why in your report:", ...doubts] : []),
         ...((structure ?? 0) > STRUCTURE_WARN ? [`If this approach is wrong it costs the structure (${pct(structure)}): tell the user before a large change.`] : []),
       ]);
     },
@@ -467,8 +503,8 @@ export default function jevPilot(pi: ExtensionAPI) {
       result = message([
         `${ICON.solution} jev-pilot: the user agreed the goal. Solution phase:`,
         `1. Read \`${REF}/solution-confidence.md\`.`,
-        '2. Draft the approach, then consult: `task` with agent "oracle", giving it what you found and the approach; ask what is wrong with it. The pilot adds the goal to every `task` call. Wait for the answer.',
-        "3. Revise, then call `pilot_propose`. Edits stay blocked until then.",
+        "2. Read the code or data the change touches, then call `pilot_propose` with the diagnosis (the raw observation, file:line) and the approach. Jev reads it and either records it or sends you to an oracle first.",
+        "3. Edits stay blocked until the approach is recorded.",
         "If their reply also answered questions, fold the answers into the approach. If it asked a side question, answer it; if your answer changes the goal, call `pilot_set_goal` again.",
       ].join("\n"));
     } else if (verdict === "amend" || verdict === "reject") {
@@ -494,7 +530,7 @@ export default function jevPilot(pi: ExtensionAPI) {
     if (MUTATING.has(name) && !path.startsWith("xd://") && (state.phase === "goal" || state.phase === "solution")) {
       return { block: true, reason: state.phase === "goal"
         ? "jev-pilot: no edits before the user agrees the goal. Call `pilot_set_goal` and wait for their reply."
-        : "jev-pilot: no edits before the approach is proposed. Consult an oracle, then call `pilot_propose`." };
+        : "jev-pilot: no edits before the approach is recorded. Call `pilot_propose` (and consult the oracle it names, if it names one)." };
     }
     if (state.phase === "execution" || state.phase === "review") {
       state.recentToolCalls.push(name);
@@ -559,7 +595,7 @@ export default function jevPilot(pi: ExtensionAPI) {
     if (s.phase === "solution" && !s.proposed) {
       if (s.redirects >= MAX_REDIRECTS) return;
       s.redirects++;
-      return again(`${ICON.solution} jev-pilot: not proposed yet (${s.redirects}/${MAX_REDIRECTS}). Consult an oracle on the approach, then call \`pilot_propose\` before executing or finishing.`);
+      return again(`${ICON.solution} jev-pilot: not proposed yet (${s.redirects}/${MAX_REDIRECTS}). Call \`pilot_propose\` with the diagnosis and approach (and consult the oracle it names, if any) before executing or finishing.`);
     }
 
     if (!s.reviewInjected) {
